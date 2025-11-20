@@ -109,7 +109,33 @@ def fetch_artifacts(cfg: AlpasimConfig) -> tuple[list[SceneIdAndUuid], str | Non
 
     # Handle scene sources
     if cfg.scenes.source == "local":
-        sceneset_dir_relative_path = Path(cfg.scenes.local.directory)
+        local_cfg = cfg.scenes.local
+
+        # Determine which scenes to use
+        if cfg.scenes.test_suite_id:
+            if not local_cfg.suites:
+                raise RuntimeError(
+                    f"Suite '{cfg.scenes.test_suite_id}' specified but no suites defined in config."
+                )
+            try:
+                scene_ids = local_cfg.suites[cfg.scenes.test_suite_id]
+                logger.info(
+                    f"Using local suite '{cfg.scenes.test_suite_id}' with {len(scene_ids)} scenes"
+                )
+            except KeyError:
+                available = list(local_cfg.suites.keys())
+                raise RuntimeError(
+                    f"Suite '{cfg.scenes.test_suite_id}' not found. Available: {available}"
+                )
+        else:
+            if not cfg.scenes.scene_ids:
+                raise RuntimeError(
+                    "No scenes specified. Either specify scenes.scene_ids or scenes.test_suite_id."
+                )
+            scene_ids = cfg.scenes.scene_ids
+
+        # Search for artifacts
+        sceneset_dir_relative_path = Path(local_cfg.directory)
         search_directory = (
             cfg.scenes.database.scene_cache + "/" + str(sceneset_dir_relative_path)
         )
@@ -119,7 +145,7 @@ def fetch_artifacts(cfg: AlpasimConfig) -> tuple[list[SceneIdAndUuid], str | Non
                 "Note: cfg.scenes.local.directory should be relative to the nre-artifacts directory."
             )
         artifact_list = _filesystem_search(
-            cfg.scenes.scene_ids, compatible_nre_versions, search_directory
+            scene_ids, compatible_nre_versions, search_directory
         )
     else:
         raise ValueError(f"Unknown scene source: {cfg.scenes.source}")
