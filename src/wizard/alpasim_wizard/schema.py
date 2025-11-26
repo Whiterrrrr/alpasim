@@ -149,7 +149,10 @@ class ServiceConfig:
     # No Dockerfile path is added to the docker-compose.yaml.
     external_image: bool = False
     command: list[str] = MISSING
-    replicas: int = MISSING
+    # Number of service replicas to run per container.
+    # If gpus is None or empty, creates a single container with this many replicas.
+    # If gpus is specified, creates one container per GPU, each with this many replicas.
+    replicas_per_container: int = MISSING
     gpus: Optional[list[int]] = MISSING
 
     environments: list[str] = field(default_factory=list)

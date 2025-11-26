@@ -1,6 +1,6 @@
 # @package _global_
-# Config for running on workstations with a single 40gb+ GPU, see TUTORIAL
-# for extra instructions. In short, use cmd line arg "+deploy=local" with wizard.
+# Config for running on workstations with two 40gb+ GPUs, see TUTORIAL
+# for extra instructions. In short, use cmd line arg "+deploy=local_2gpus" with wizard.
 
 defaults:
   - _self_
@@ -12,21 +12,21 @@ defines:
 
 services:
   driver:
-    replicas: 2
+    replicas_per_container: 1
     gpus: [0, 1]
 
   sensorsim:
-    replicas: 2
+    replicas_per_container: 1
     gpus: [0, 1]
 
   physics:
-    replicas: 2
+    replicas_per_container: 1
     gpus: [0, 1]
 
   trafficsim:
-    replicas: 2
+    replicas_per_container: 1
     gpus: [0, 1]
 
   controller:
-    replicas: 2
+    replicas_per_container: 2
     gpus: null

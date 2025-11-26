@@ -54,32 +54,113 @@ class VolumeMount:
 @dataclass
 class ContainerDefinition:
     """
-    Contains the configuration of a specific container being deployed.
+    Unified container definition supporting single or multiple service instances.
     """
 
-    replica_idx: int
-    name: str
-    gpu: Optional[int]
+    @dataclass
+    class ServiceInstance:
+        """Represents a single service instance within a container."""
+
+        replica_idx: int
+        command: str
+        address: Optional[Address]
+        parent_container_definition: Optional[ContainerDefinition] = field(default=None)
+
+        @property
+        def port(self) -> Optional[int]:
+            """Get port from address if available, otherwise None."""
+            return self.address.port if self.address is not None else None
+
+        @property
+        def service_config(self) -> ServiceConfig:
+            """Get service config from parent container definition."""
+            if self.parent_container_definition is None:
+                raise ValueError("Parent container definition is not set")
+            return self.parent_container_definition.service_config
+
+    uuid: str  # Format: {container_name == service_name}-{container_idx}
+    name: str  # Name of the service
     service_config: ServiceConfig
+    service_instances: list[ServiceInstance]
+    gpu: Optional[int]
     context: WizardContext
-    port: Optional[int]
-    command: str
     workdir: Optional[str]
     environments: list[str]
     volumes: list[VolumeMount]
-    address: Optional[Address]
-    uuid: str
+
+    @property
+    def command(self) -> str:
+        """Get command string."""
+        if not self.service_instances:
+            return ""
+        if len(self.service_instances) == 1:
+            return self.service_instances[0].command
+        else:
+            # Build command that captures exit codes and propagates errors
+            # Each command runs in background, we capture PIDs, wait for each,
+            # and exit with non-zero if any command fails
+            commands = [inst.command for inst in self.service_instances]
+            pid_vars = []
+
+            # Build the script with proper formatting:
+            # - Each command on its own line with & at the end
+            # - PID assignment on the next line
+            # - Trap to kill all processes on TERM/INT
+            # - Wait loop that captures exit codes
+            script_lines = []
+            for i, cmd in enumerate(commands):
+                pid_var = f"PID{i}"
+                pid_vars.append(pid_var)
+                script_lines.append(f"{cmd} &")
+                script_lines.append(f"{pid_var}=\\$!")
+                script_lines.append("")
+
+            # Add trap to kill all processes
+            pid_list = " ".join(f'"\\${pid}"' for pid in pid_vars)
+            script_lines.append(f"trap 'kill {pid_list} 2>/dev/null' TERM INT")
+            script_lines.append("")
+
+            # Add wait loop
+            script_lines.append("EXIT_CODE=0")
+            pid_list_wait = " ".join(f'"\\${pid}"' for pid in pid_vars)
+            script_lines.append(f"for pid in {pid_list_wait}; do")
+            script_lines.append('    wait "\\$pid" || EXIT_CODE=\\$?')
+            script_lines.append("done")
+            script_lines.append('exit "\\$EXIT_CODE"')
+
+            return "\n".join(script_lines)
+
+    def get_all_addresses(self) -> list[Address]:
+        """Get all addresses from service instances."""
+        return [
+            inst.address for inst in self.service_instances if inst.address is not None
+        ]
 
     @staticmethod
     def create(
-        replica_idx: int,
-        service_name: str,
-        port: Optional[int],
+        name: str,
+        service_instances: list[ServiceInstance],
         gpu: Optional[int],
         service_config: ServiceConfig,
         context: WizardContext,
-        use_address_string: Literal["localhost", "0.0.0.0", "uuid"],
     ) -> ContainerDefinition:
+        """Create a container definition with one or more service instances.
+
+        Args:
+            name: Name of the service
+            service_instances: List of service instances to run in this container
+            gpu: GPU ID to assign to this container
+            service_config: ServiceConfig for the service instances
+            context: WizardContext containing configuration
+
+        Returns:
+            ContainerDefinition instance with the service instances
+        """
+        if not service_instances:
+            raise ValueError("Must provide at least one service instance")
+
+        # Note: all service instances share the same ServiceConfig, volumes and environments
+        first_instance = service_instances[0]
 
         workdir = getattr(service_config, "workdir", None)
         environments = list(service_config.environments)
@@ -92,24 +173,26 @@ class ContainerDefinition:
                 if not volume.host_exists():
                     raise OSError(f"{volume=} does not exist on host")
 
-        uuid = f"{service_name}-{replica_idx}"
+        # Generate container UUID from first service instance
+        container_idx = (
+            first_instance.replica_idx // service_config.replicas_per_container
+        )
+        uuid = f"{name}-{container_idx}"
 
-        return ContainerDefinition(
-            replica_idx=replica_idx,
-            name=service_name,
+        container_definition = ContainerDefinition(
+            name=name,
+            uuid=uuid,
+            service_instances=service_instances,
             gpu=gpu,
             service_config=service_config,
             context=context,
-            port=port,
-            command=ContainerDefinition._build_command(
-                service_config, port, context, service_name
-            ),
             workdir=workdir,
             environments=environments,
             volumes=volumes,
-            address=ContainerDefinition._build_address(port, uuid, use_address_string),
-            uuid=uuid,
         )
+        for instance in service_instances:
+            instance.parent_container_definition = container_definition
+        return container_definition
 
     @staticmethod
     def _build_command(
@@ -166,12 +249,12 @@ class ContainerDefinition:
 class ContainerSet:
     """Container organization for deployment strategies."""
 
-    sim: list = field(default_factory=list)
-    eval: list = field(default_factory=list)
-    agg: list = field(default_factory=list)
-    runtime: list = field(default_factory=list)
+    sim: list[ContainerDefinition] = field(default_factory=list)
+    eval: list[ContainerDefinition] = field(default_factory=list)
+    agg: list[ContainerDefinition] = field(default_factory=list)
+    runtime: list[ContainerDefinition] = field(default_factory=list)
 
-    def all_containers(self) -> list:
+    def all_containers(self) -> list[ContainerDefinition]:
         """Get all containers in execution order."""
         return self.sim + self.runtime + self.eval + self.agg
 
@@ -228,9 +311,17 @@ def build_container_set(
                 logger.debug(f"Skipping service {service_name} (marked as skip)")
                 return []
 
+        # Validate replicas_per_container
+        replicas_per_container = service_config.replicas_per_container
+        if replicas_per_container < 1:
+            raise ValueError(
+                f"replicas_per_container must be >= 1, got {replicas_per_container}"
+            )
+
         # Validate GPU configuration
         if (
             service_config.gpus is not None
+            and len(service_config.gpus) > 0
             and num_gpus > 0
             and not all(gpu_id < num_gpus for gpu_id in service_config.gpus)
         ):
@@ -239,22 +330,56 @@ def build_container_set(
                 f"but only 0 .. {num_gpus-1} are available."
             )
 
-        # Build containers for all replicas
-        gpu_assigner = create_gpu_assigner(service_config.gpus)
-        containers = []
+        # Determine number of containers
+        # If no GPUs specified, create a single container
+        # Otherwise, create one container per GPU
+        if service_config.gpus is None or len(service_config.gpus) == 0:
+            num_containers = 1
+            gpu_assigner = create_gpu_assigner(None)  # No GPUs
+        else:
+            num_containers = len(service_config.gpus)
+            gpu_assigner = create_gpu_assigner(service_config.gpus)
 
-        for replica_idx, port, gpu in zip(
-            range(service_config.replicas), context.port_assigner, gpu_assigner
-        ):
+        containers: List[ContainerDefinition] = []
+        replica_idx = 0
+
+        for container_idx in range(num_containers):
+            # Build service instances for this container
+            service_instances = []
+            gpu = next(gpu_assigner)
+            uuid = service_name + "-" + str(container_idx)
+
+            for _ in range(replicas_per_container):
+                port = next(context.port_assigner)
+
+                # Build command for this service instance
+                command = ContainerDefinition._build_command(
+                    service_config, port, context, service_name
+                )
+
+                # Build addresses for all service instances using the container UUID
+                address = ContainerDefinition._build_address(
+                    port, uuid, use_address_string
+                )
+
+                # Create service instance
+                service_instance = ContainerDefinition.ServiceInstance(
+                    replica_idx=replica_idx,
+                    command=command,
+                    address=address,
+                )
+
+                service_instances.append(service_instance)
+                replica_idx += 1
+
+            # Create container with service instances
             containers.append(
                 ContainerDefinition.create(
-                    replica_idx=replica_idx,
-                    port=port,
+                    name=service_name,
+                    service_instances=service_instances,
                     gpu=gpu,
-                    service_name=service_name,
                     service_config=service_config,
                     context=context,
-                    use_address_string=use_address_string,
                 )
             )
 
@@ -270,15 +395,22 @@ def build_container_set(
     for name in cfg.wizard.run_sim_services or []:
         if name == "runtime":
             # Runtime handled separately
+            runtime_config = cfg.services.runtime
+            command = ContainerDefinition._build_command(
+                runtime_config, None, context, "runtime"
+            )
+            runtime_instance = ContainerDefinition.ServiceInstance(
+                replica_idx=0,
+                command=command,
+                address=None,  # Unused for runtime
+            )
             runtime_containers = [
                 ContainerDefinition.create(
-                    service_name="runtime",
+                    name="runtime",
+                    service_instances=[runtime_instance],
                     service_config=cfg.services.runtime,
-                    replica_idx=0,
-                    port=None,
                     gpu=None,
                     context=context,
-                    use_address_string=use_address_string,
                 )
             ]
         else:

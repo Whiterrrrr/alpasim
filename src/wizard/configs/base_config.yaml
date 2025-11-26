@@ -134,9 +134,9 @@ services:
       # - "--enable-timing" # uncomment to enable timing information on the sensor simulator side
     # \/ gpus is a list of GPUs to use for all service replicas, each replica using one (possibly shared GPU). See below
     gpus: [2, 3, 4, 5, 6, 7]
-    # \/ replicas indicates we want 6 identical containers started (for load balancing). With the `gpus` definition above we'll
-    # have 6 replicas on 6 GPUs but it's possible to e.g. have 12 replicas on 6 GPUs (to better utilize them).
-    replicas: 6
+    # \/ replicas_per_container indicates we want 6 identical containers started (for load balancing). With the `gpus` definition above we'll
+    # have 1 replicas on each of the 6 GPUs but it's possible to e.g. have 12 replicas on 6 GPUs (to better utilize them) by setting replicas_per_container
+    replicas_per_container: 1
 
   # \/ services.drive is the driving policy (Alpamayo/HydraMDP, etc)
   driver:
@@ -152,7 +152,7 @@ services:
       - "host=0.0.0.0"
       - "port={port}"
 
-    replicas: 1
+    replicas_per_container: 1
     gpus: [0]
 
   physics:
@@ -168,14 +168,14 @@ services:
       - "--port={port}" # arbitrary, needs to be updated in runtime-config.yaml
       - "--artifact-glob=/mnt/nre-data/{sceneset}/**/*.usdz"
       - "--use-ground-mesh=true"
-    replicas: 1
+    replicas_per_container: 1
     gpus: [1]
 
   trafficsim:
     image: ???
     command:
       - "echo 'not yet included'"
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
 
   controller:
@@ -187,7 +187,7 @@ services:
       - "uv run python -m alpasim_controller.server"
       - "--port={port}"
       - "--log_dir=/mnt/output"
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
 
 
@@ -212,6 +212,7 @@ services:
       - "--prometheus-out=/mnt/rollouts/alpasim-runtime.prom"
       - "--user-config=/mnt/rollouts/{runtime_config_name}"
       - "--network-config=/mnt/rollouts/generated-network-config.yaml"
+    replicas_per_container: 1 # should only be one runtime orchestrator
 
   eval:
     image: ???
@@ -219,7 +220,7 @@ services:
       - "${wizard.log_dir}:/mnt/log_dir"
       - "${scenes.database.scene_cache}:/mnt/nre-data"
       - "${repo-relative:'src'}:/repo/src"
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
     command:
       - "uv run alpasim-eval"
@@ -235,7 +236,7 @@ services:
       - "${wizard.log_dir}:/mnt/log_dir"
       - "${or:${wizard.array_job_dir},${wizard.log_dir}}:/mnt/array_job_dir"
       - "${repo-relative:'src'}:/repo/src"
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
     command:
       - "uv run alpasim-aggregation"

@@ -11,23 +11,23 @@ defines:
 
 services:
   driver:
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
 
   sensorsim:
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
 
   physics:
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
 
   trafficsim:
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
 
   controller:
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
 
 

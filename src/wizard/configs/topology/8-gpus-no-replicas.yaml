@@ -10,18 +10,18 @@ services:
       - OMP_NUM_THREADS=1
 
     gpus: [3, 4, 5, 6, 7]
-    replicas: 5
+    replicas_per_container: 1
 
   driver:
-    replicas: 1
+    replicas_per_container: 1
     gpus: [0]
 
   physics:
-    replicas: 1
+    replicas_per_container: 1
     gpus: [1]
 
   trafficsim:
-    replicas: 1
+    replicas_per_container: 1
     gpus: [2]
 
 runtime:

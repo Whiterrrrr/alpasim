@@ -21,24 +21,24 @@ services:
       # leave some room for traffic sim if enabled in sub-configs
       - PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.7
 
-    replicas: 12 # 2 replicas per GPU, 4 instances each -> Max 8 scenes on each GPU
+    replicas_per_container: 2 # 2 replicas per GPU, 4 instances each -> Max 8 scenes on each GPU (10 if cache considered)
     gpus: [0, 1, 2, 3, 4, 5]
 
 
   driver:
-    replicas: 2
+    replicas_per_container: 1
     gpus: [6, 7]
 
   physics:
-    replicas: 6
+    replicas_per_container: 1
     gpus: [0, 1, 2, 3, 4, 5]
 
   controller:
-    replicas: 6
+    replicas_per_container: 6
     gpus: null
 
   trafficsim:
-    replicas: 2
+    replicas_per_container: 1
     gpus: [0, 1]
 
 runtime:

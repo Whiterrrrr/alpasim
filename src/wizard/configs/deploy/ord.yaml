@@ -21,7 +21,7 @@ services:
       # leave some room for traffic sim if enabled in sub-configs
       - PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.7
 
-    replicas: 4
+    replicas_per_container: 1
     gpus: [0, 1, 2, 3]
 
 
@@ -30,7 +30,7 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.5 # 40gb should be ample
 
     gpus: [4, 5, 6, 7]
-    replicas: 4
+    replicas_per_container: 1
 
     volumes:
       # Base config
@@ -41,15 +41,15 @@ services:
       - "/lustre:/lustre"
 
   physics:
-    replicas: 6
+    replicas_per_container: 1
     gpus: [2, 3, 4, 5, 6, 7]
 
   controller:
-    replicas: 2
+    replicas_per_container: 2
     gpus: null
 
   trafficsim:
-    replicas: 2
+    replicas_per_container: 1
     gpus: [0, 1]
 
 runtime:
