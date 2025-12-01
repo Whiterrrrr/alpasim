@@ -89,6 +89,9 @@ class WizardConfig:
     run_name: Optional[str] = None
     run_method: RunMethod = MISSING
     run_mode: RunMode = MISSING
+
+    # Global log level for all alpasim services (DEBUG, INFO, WARNING, ERROR)
+    log_level: str = "INFO"
     description: Optional[str] = None  # TODO(mwatson): is this redundant to run_name?
     submitter: Optional[str] = None
 
@@ -149,7 +152,10 @@ class ServiceConfig:
     # No Dockerfile path is added to the docker-compose.yaml.
     external_image: bool = False
     command: list[str] = MISSING
-    replicas: int = MISSING
+    # Number of service replicas to run per container.
+    # If gpus is None or empty, creates a single container with this many replicas.
+    # If gpus is specified, creates one container per GPU, each with this many replicas.
+    replicas_per_container: int = MISSING
     gpus: Optional[list[int]] = MISSING
 
     environments: list[str] = field(default_factory=list)

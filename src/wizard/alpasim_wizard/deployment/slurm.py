@@ -15,7 +15,7 @@ from typing import Any, List, Optional
 
 from ..context import WizardContext
 from ..schema import RunMode
-from ..services import build_container_set
+from ..services import ContainerDefinition, build_container_set
 from ..utils import image_url_to_sqsh_filename
 from .dispatcher import dispatch_command
 
@@ -193,7 +193,11 @@ class SlurmDeployment:
 
         return job_ids
 
-    def _to_slurm_run(self, container: Any, mode: RunMode) -> str:
+    def _to_slurm_run(
+        self,
+        container: ContainerDefinition,
+        mode: RunMode,
+    ) -> str:
         """Generate SLURM srun command for a container.
 
         Args:
@@ -207,6 +211,7 @@ class SlurmDeployment:
             container.context.cfg.wizard.slurm_job_id is not None
         ), "SLURM environment not detected"
         slurm_job_id = container.context.cfg.wizard.slurm_job_id
+
         s_log = (
             f"{container.context.cfg.wizard.log_dir}/txt-logs/"
             f"out-{slurm_job_id}-{container.uuid}-log.txt"
@@ -252,7 +257,7 @@ class SlurmDeployment:
 
     def _wrap_in_sbatch_script(
         self,
-        container: Any,
+        container: ContainerDefinition,
         srun_command_str: str,
         dependencies: list[int] | None = None,
     ) -> str:
@@ -272,15 +277,26 @@ class SlurmDeployment:
         if srun_command_str.endswith(" &"):
             srun_command_str = srun_command_str[:-2]
 
+        if (
+            container.context.cfg.wizard.slurm_gpu_partition is None
+            and os.environ.get("SLURM_JOB_PARTITION") is None
+        ):
+            raise ValueError(
+                "SLURM GPU partition must be set in wizard config (wizard.slurm_gpu_partition) "
+                "or available via SLURM_JOB_PARTITION environment variable for sbatch submission."
+            )
+
         if container.gpu is not None:
             if container.gpu != 0:
                 raise ValueError(
                     "Jobs dispatched via wrap_in_sbatch_script should request gpu 0 or none at all."
                 )
+            gpu_partition = container.context.cfg.wizard.slurm_gpu_partition
+            if gpu_partition is None:
+                gpu_partition = os.environ.get("SLURM_JOB_PARTITION", "")
             bash_script_template = build_sbatch(
                 srun_command_str,
-                partition=container.context.cfg.wizard.slurm_gpu_partition
-                or os.environ.get("SLURM_JOB_PARTITION", ""),
+                partition=gpu_partition,
                 gpus=1,
             )
         else:
@@ -316,7 +332,7 @@ class SlurmDeployment:
 
     def _get_slurm_dispatch_command(
         self,
-        container: Any,
+        container: ContainerDefinition,
         mode: str,
         requires_sbatch: bool = False,
         dependencies: list[int] | None = None,
@@ -346,50 +362,59 @@ class SlurmDeployment:
 
     def wait_for_containers(
         self,
-        containers: List[Any],
+        containers: List[ContainerDefinition],
         timeout: Optional[int] = None,
         raise_on_timeout: bool = True,
     ) -> bool:
         """Wait for containers to be ready."""
         logger.info("Waiting for addresses:")
         for container in containers:
-            if container.address:
-                logger.info("  %s:%s", container.name, container.address)
+            for service_instance in container.service_instances:
+                logger.info(
+                    "  %s:%s",
+                    container.name,
+                    service_instance.address,
+                )
 
         s_waited = 0
         for container in containers:
-            if container.address is None:
-                continue
-
-            while not container.address.is_open():
-                time.sleep(1)
-                s_waited += 1
-                if timeout is not None and s_waited > timeout:
-                    if raise_on_timeout:
-                        raise TimeoutError(
-                            f"Address {container.address} of {container.name} did not open in time"
-                        )
-                    else:
-                        logger.info(
-                            "  %s of %s not open yet after %d seconds.",
-                            container.address,
-                            container.name,
-                            s_waited,
-                        )
-                        return False
-
-            logger.info("  %s found.", container.address)
+            for service_instance in container.service_instances:
+                if service_instance.address is None:
+                    continue
+                while not service_instance.address.is_open():
+                    time.sleep(1)
+                    s_waited += 1
+                    if timeout is not None and s_waited > timeout:
+                        if raise_on_timeout:
+                            raise TimeoutError(
+                                f"Address {service_instance.address} of {container.name} "
+                                "did not open in time"
+                            )
+                        else:
+                            logger.info(
+                                "  %s of %s not open yet after %d seconds.",
+                                service_instance.address,
+                                container.name,
+                                s_waited,
+                            )
+                            return False
+                logger.info("  %s found.", service_instance.address)
 
         logger.info("  All addresses open.")
         return True
 
-    def get_missing_containers(self, containers: List[Any]) -> List[Any]:
+    def get_missing_containers(
+        self, containers: List[ContainerDefinition]
+    ) -> List[ContainerDefinition]:
         """Get containers that are not yet running."""
-        return [
-            container
-            for container in containers
-            if container.address is not None and not container.address.is_open()
-        ]
+        missing: List[ContainerDefinition] = []
+        for container in containers:
+            # Check if any service instance is not ready
+            for inst in container.service_instances:
+                if inst.address is not None and not inst.address.is_open():
+                    missing.append(container)
+                    break
+        return missing
 
 
 def build_sbatch(

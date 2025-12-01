@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from alpasim_wizard.context import WizardContext
 from omegaconf import OmegaConf
 
-from .services import ContainerSet
+from .services import ContainerDefinition, ContainerSet
 from .utils import save_loadable_wizard_config, write_yaml
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ class ConfigurationManager:
 
         # Get sim containers from service_manager for network config
         sim_containers = container_set.sim
-        self._generate_network_config(cfg, sim_containers)
+        self._generate_network_config(sim_containers)
 
         self._generate_trafficsim_config(cfg)
         self._generate_eval_config(cfg)
@@ -83,7 +83,10 @@ class ConfigurationManager:
         logger.debug(f"Generated runtime config: {filename}")
         return filename
 
-    def _generate_network_config(self, cfg: Any, service_containers: List[Any]) -> None:
+    def _generate_network_config(
+        self,
+        service_containers: List[ContainerDefinition],
+    ) -> None:
         """Generate network configuration for service discovery."""
 
         network_config: Dict[str, Any] = {
@@ -95,29 +98,33 @@ class ConfigurationManager:
         }
 
         for c in service_containers:
-            # A special configuration has been requested, where the sensorsim and
-            # physics service exist in the same process/at the same port. This logical
-            # branch handles that mapping.
-            if c.name == "physics" and c.service_config.image == "*sensorsim*":
-                logger.info("Mapping the physics service to sensorsim addresses")
-                sensorsim_service_containers = [
-                    sc for sc in service_containers if sc.name == "sensorsim"
-                ]
-                if len(sensorsim_service_containers) != 1:
-                    raise ValueError(
-                        "Expected exactly one sensorsim service container, "
-                        f"found {len(sensorsim_service_containers)}"
-                    )
-                if c.address is None:
-                    raise ValueError("Physics service must have an address defined")
-                c.address.port = sensorsim_service_containers[0].address.port
-                logger.info("Mapped physics to sensorsim at %s", c.address)
+            for inst in c.service_instances:
+                # A special configuration has been requested, where the sensorsim and
+                # physics service exist in the same process/at the same port. This logical
+                # branch handles that mapping.
+                if c.name == "physics" and inst.service_config.image == "*sensorsim*":
+                    logger.info("Mapping the physics service to sensorsim addresses")
+                    # get the sensorsim container
+                    sensorsim_containers = [
+                        sc for sc in service_containers if sc.name == "sensorsim"
+                    ]
+                    if (len(sensorsim_containers) != 1) or (
+                        len(sensorsim_containers[0].get_all_addresses()) != 1
+                    ):
+                        raise ValueError(
+                            "Expected exactly one sensorsim container/address"
+                        )
+                    sensorsim_address = sensorsim_containers[0].get_all_addresses()[0]
+                    if inst.address is None:
+                        raise ValueError("Physics service must have an address defined")
+                    inst.address.port = sensorsim_address.port
+                    logger.info("Mapped physics to sensorsim at %s", inst.address)
 
-            elif c.address is None:
-                continue
+                elif inst.address is None:
+                    continue
 
-            if c.name in network_config:
-                network_config[c.name]["addresses"].append(str(c.address))
+                if c.name in network_config:
+                    network_config[c.name]["addresses"].append(str(inst.address))
 
         self._write_config("generated-network-config.yaml", network_config)
         logger.debug("Generated network config")

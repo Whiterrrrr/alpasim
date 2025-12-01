@@ -20,10 +20,22 @@ def read_yaml(file_path: str) -> dict[str, Any]:
         return yaml.safe_load(stream)
 
 
+class LiteralStr(str):
+    """Wrapper class for strings that should be represented as YAML literal block scalars."""
+
+    pass
+
+
 def write_yaml(data: dict[str, Any], file_path: str) -> None:
     class IndentedListDumper(yaml.Dumper):
         def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
             return super(IndentedListDumper, self).increase_indent(flow, False)
+
+    def represent_literal_str(dumper: yaml.Dumper, data: LiteralStr) -> yaml.ScalarNode:
+        """Represent LiteralStr instances as literal block scalars."""
+        return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+
+    IndentedListDumper.add_representer(LiteralStr, represent_literal_str)
 
     with open(file_path, "w") as stream:
         yaml.dump(data, stream, Dumper=IndentedListDumper)

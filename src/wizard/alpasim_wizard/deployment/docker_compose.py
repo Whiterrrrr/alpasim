@@ -13,8 +13,8 @@ from textwrap import dedent
 from typing import Any
 
 from ..context import WizardContext
-from ..services import build_container_set
-from ..utils import write_yaml
+from ..services import ContainerDefinition, build_container_set
+from ..utils import LiteralStr, write_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,9 @@ class DockerComposeDeployment:
         os.chmod(run_script_path, 0o755)
         logger.info("Generated run script: %s", run_script_path)
 
-    def _to_docker_compose_service(self, container: Any) -> dict[str, Any]:
+    def _to_docker_compose_service(
+        self, container: ContainerDefinition
+    ) -> dict[str, Any]:
         """Convert container to Docker Compose service definition.
 
         Args:
@@ -145,13 +147,20 @@ class DockerComposeDeployment:
             # 'our' OmegaConf parser, but by downstream parsers in the service.
             # Furhtermore, for docker-compose, we need to escape $ as $$
             command = command.replace(r"\$", "$$")
+            # Use literal scalar string for multi-line commands to get | format in YAML
+            if "\n" in command:
+                command = LiteralStr(command)
             ret["command"] = ["-c", command]
         if container.workdir:
             ret["working_dir"] = container.workdir
         if container.environments:
             ret["environment"] = container.environments
-        if container.address is not None:
-            ret["ports"] = [f"{container.address.port}:{container.address.port}"]
+
+        addresses = container.get_all_addresses()
+        if addresses:
+            ports = [f"{addr.port}:{addr.port}" for addr in addresses]
+            ret["ports"] = ports
+
         if container.gpu is not None:
             ret["deploy"] = {
                 "resources": {
@@ -183,6 +192,7 @@ class DockerComposeDeployment:
         # Phase 1: Simulation services (runtime should start last in sim phase)
         for c in container_set.sim or []:
             if c.command == "noop":
+                # Special logic to support sensorsim/physics combined process
                 continue
             service = self._to_docker_compose_service(c)
             service["profiles"] = ["sim"]
@@ -192,6 +202,22 @@ class DockerComposeDeployment:
         for c in container_set.runtime or []:
             service = self._to_docker_compose_service(c)
             service["profiles"] = ["sim"]
+            # Runtime needs host PID namespace for process monitoring
+            service["pid"] = "host"
+            # Runtime needs access to all GPUs for telemetry/resource monitoring
+            service["deploy"] = {
+                "resources": {
+                    "reservations": {
+                        "devices": [
+                            {
+                                "driver": "nvidia",
+                                "count": "all",
+                                "capabilities": ["gpu"],
+                            }
+                        ]
+                    }
+                }
+            }
             services[c.uuid] = service
 
         # Phase 2: Evaluation services

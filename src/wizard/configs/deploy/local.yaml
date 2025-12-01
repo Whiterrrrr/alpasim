@@ -12,17 +12,17 @@ defines:
 
 services:
   driver:
-    replicas: 1
+    replicas_per_container: 1
     gpus: [0]
 
   sensorsim:
-    replicas: 1
-    gpus: [0]
+    replicas_per_container: 1
+    gpus: [1]
 
   physics:
-    replicas: 1
+    replicas_per_container: 1
     gpus: [0]
 
   controller:
-    replicas: 1
+    replicas_per_container: 1
     gpus: null
