@@ -262,6 +262,40 @@ with:
     docker compose -f docker-compose.yaml --profile sim up runtime-0 driver-0 physics-0 sensorsim-0
     ```
 
+### Using VSCode Debugger (Optional)
+
+For VSCode users, instead of running the controller from the command line (step 3), you can use the built-in debugger:
+
+1. Create or update `.vscode/launch.json` with:
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Controller (Level 3 Tutorial)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "alpasim_controller.server",
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}/src/controller",
+            "args": [
+                "--port=6003",
+                "--log_dir=my_controller_logdir",
+                "--log-level=INFO"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}
+```
+
+2. Set breakpoints in the controller code
+3. Press F5 (or go to Run and Debug → "Debug Controller")
+4. Your breakpoints will hit as the simulation runs!
+
+**Note:** Make sure the `--port` argument matches the port allocated in `docker-compose.yaml`.
+
 ## Breakpoint debugging: example with the runtime
 If the `runtime` is the service being debugged, there are a few things that change. For one, it is
 expected that the other services are up and running before the `runtime` is brought up, so the
@@ -295,3 +329,32 @@ generated from the earlier steps, an example command would be:
     --log-dir=../../tutorial_dbg_runtime \
     --log-level=INFO
     ```
+
+### Using VSCode Debugger (Optional)
+
+For VSCode users, instead of running the runtime from the command line (step 3), you can use the built-in debugger:
+
+1. Add this configuration to `.vscode/launch.json`:
+
+```json
+{
+    "name": "Debug Runtime (Level 3 Tutorial)",
+    "type": "debugpy",
+    "request": "launch",
+    "module": "alpasim_runtime.simulate",
+    "justMyCode": false,
+    "cwd": "${workspaceFolder}/src/runtime",
+    "args": [
+        "--usdz-glob=../../data/nre-artifacts/all-usdzs/**/*.usdz",
+        "--user-config=../../tutorial_dbg_runtime/generated-user-config-0.yaml",
+        "--network-config=../../tutorial_dbg_runtime/generated-network-config.yaml",
+        "--log-dir=../../tutorial_dbg_runtime",
+        "--log-level=INFO"
+    ],
+    "console": "integratedTerminal"
+}
+```
+
+2. Set breakpoints in the runtime code
+3. Press F5 (or go to Run and Debug → "Debug Runtime")
+4. Your breakpoints will hit as the simulation runs!
